@@ -1,0 +1,8 @@
+[package]
+name = "private-box"
+version = "0.1.0"
+authors = ["Piet Geursen <pietgeursen@gmail.com>"]
+
+[dependencies]
+libsodium-sys = "0.0.16"
+arrayref = "0.3.4"
