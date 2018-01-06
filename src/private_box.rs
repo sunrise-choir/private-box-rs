@@ -1,4 +1,5 @@
 use libsodium_sys::{
+    sodium_init,
     randombytes_buf, 
     crypto_box_PUBLICKEYBYTES,
     crypto_box_SECRETKEYBYTES,
@@ -10,13 +11,58 @@ use libsodium_sys::{
     sodium_memzero,
 };
 
-
 const MAX_RECIPIENTS : usize = 7;
 const NONCE_NUM_BYTES: usize = 24;
 const KEY_NUM_BYTES: usize = 32;
 const _KEY_NUM_BYTES: usize = KEY_NUM_BYTES + 1;
 
+/// Must be called before using `private_box::encrypt` or `private_box::decrypt`.
+/// Initialises libsodium.
+pub fn init(){
+    unsafe{
+        sodium_init();
+    }
+}
 
+///Takes the message you want to encrypt, and an array of recipient public keys. Returns a message that is encrypted to all recipients and openable by them with `private_box::decrypt`. The number of recipients must be between 1 and 7.
+///
+///The encrypted length will be 56 + (recipients.length * 33) + plaintext.length bytes long, between 89 and 287 bytes longer than the plaintext.
+///
+///# Example
+///```
+///extern crate libsodium_sys;
+///extern crate private_box;
+///
+///use private_box::{init, encrypt, decrypt};
+///use libsodium_sys::{
+///     crypto_box_PUBLICKEYBYTES,
+///     crypto_box_SECRETKEYBYTES,
+///     crypto_box_keypair,
+///};
+///fn main() {
+///    let msg : [u8; 3] = [0,1,2];
+///    let mut alice_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
+///    let mut alice_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
+///    let mut bob_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
+///    let mut bob_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
+///
+///    init();
+///    unsafe {
+///        crypto_box_keypair(& mut alice_pk, & mut alice_sk);
+///        crypto_box_keypair(& mut bob_pk, & mut bob_sk);
+///    }
+///
+///    let recps: [[u8; 32]; 2] = [alice_pk, bob_pk];
+///    let cypher = encrypt(&msg, &recps);
+///
+///    let alice_result = decrypt(&cypher, &alice_sk);
+///    let bob_result = decrypt(&cypher, &bob_sk);
+///
+///    assert_eq!(alice_result.unwrap(), msg);
+///    assert_eq!(bob_result.unwrap(), msg);
+///}
+///
+///```
 pub fn encrypt(plaintext: & [u8], recipients: &[[u8; 32]]) -> Vec<u8>{
 
     let mut nonce : [u8; NONCE_NUM_BYTES] = [0; NONCE_NUM_BYTES]; 
@@ -45,7 +91,7 @@ pub fn encrypt(plaintext: & [u8], recipients: &[[u8; 32]]) -> Vec<u8>{
             }
             cyphertext
         })
-        .collect::<Vec<u8>>();
+    .collect::<Vec<u8>>();
 
     let mut boxed_message : Vec<u8> = vec![0; plaintext.len() + crypto_secretbox_MACBYTES];
 
@@ -73,6 +119,43 @@ pub fn encrypt(plaintext: & [u8], recipients: &[[u8; 32]]) -> Vec<u8>{
 const START_BYTE_NUM : usize = 24 + 32;
 const BOXED_KEY_SIZE_BYTES : usize = 32 + 1 + 16;
 
+///Attempt to decrypt a private-box message, using your secret key. If you were an intended recipient then the decrypted message is returned as `Some(Vec<u8>)`. If it was not for you, then `None` will be returned.
+///
+///# Example
+///```
+///extern crate libsodium_sys;
+///extern crate private_box;
+///
+///use private_box::{init, encrypt, decrypt};
+///use libsodium_sys::{
+///     crypto_box_PUBLICKEYBYTES,
+///     crypto_box_SECRETKEYBYTES,
+///     crypto_box_keypair,
+///};
+///fn main() {
+///    let msg : [u8; 3] = [0,1,2];
+///    let mut alice_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
+///    let mut alice_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
+///    let mut bob_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
+///    let mut bob_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
+///
+///    init();
+///    unsafe {
+///        crypto_box_keypair(& mut alice_pk, & mut alice_sk);
+///        crypto_box_keypair(& mut bob_pk, & mut bob_sk);
+///    }
+///
+///    let recps: [[u8; 32]; 2] = [alice_pk, bob_pk];
+///    let cypher = encrypt(&msg, &recps);
+///
+///    let alice_result = decrypt(&cypher, &alice_sk);
+///    let bob_result = decrypt(&cypher, &bob_sk);
+///
+///    assert_eq!(alice_result.unwrap(), msg);
+///    assert_eq!(bob_result.unwrap(), msg);
+///}
+///
+///```
 pub fn decrypt(cyphertext: & [u8], secret_key: &[u8; 32]) -> Option<Vec<u8>>{
     let nonce = array_ref![cyphertext, 0, 24];
     let onetime_pk = array_ref![cyphertext, 24, 32];
@@ -122,13 +205,12 @@ pub fn decrypt(cyphertext: & [u8], secret_key: &[u8; 32]) -> Option<Vec<u8>>{
 
 #[cfg(test)]
 mod tests {
+    use private_box::{init, encrypt, decrypt};
     use libsodium_sys::{
-        sodium_init,
         crypto_box_PUBLICKEYBYTES,
         crypto_box_SECRETKEYBYTES,
         crypto_box_keypair,
     };
-    use private_box::{encrypt, decrypt};
     #[test]
     fn simple() {
         let msg : [u8; 3] = [0,1,2];
@@ -137,8 +219,8 @@ mod tests {
         let mut bob_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
         let mut bob_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
 
+        init();
         unsafe {
-            sodium_init();
             crypto_box_keypair(& mut alice_pk, & mut alice_sk);
             crypto_box_keypair(& mut bob_pk, & mut bob_sk);
         }
