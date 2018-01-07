@@ -10,6 +10,7 @@ use libsodium_sys::{
     crypto_secretbox_MACBYTES,
     sodium_memzero,
 };
+use std::cmp;
 
 const MAX_RECIPIENTS : usize = 7;
 const NONCE_NUM_BYTES: usize = 24;
@@ -75,7 +76,7 @@ pub fn encrypt(plaintext: & [u8], recipients: &[[u8; 32]]) -> Vec<u8>{
         crypto_box_keypair(& mut one_time_pubkey, & mut one_time_secretkey);
     }
 
-    let mut _key : Vec<u8> = vec![(recipients.len() as u8 & MAX_RECIPIENTS as u8)];
+    let mut _key : Vec<u8> = vec![cmp::min(recipients.len() as u8, MAX_RECIPIENTS as u8)];
     _key.extend_from_slice(&key.clone());
 
     let boxed_key_for_recipients : Vec<u8> = recipients
@@ -99,7 +100,7 @@ pub fn encrypt(plaintext: & [u8], recipients: &[[u8; 32]]) -> Vec<u8>{
         crypto_secretbox_easy(boxed_message.as_mut_ptr(), plaintext.as_ptr(), plaintext.len() as u64, &nonce, &key);
     }
 
-    let mut result : Vec<u8> = vec![]; 
+    let mut result : Vec<u8> = Vec::with_capacity(NONCE_NUM_BYTES + KEY_NUM_BYTES + boxed_key_for_recipients.len() + boxed_message.len()); 
     result.extend_from_slice(&nonce.clone());
     result.extend_from_slice(&one_time_pubkey);
     result.extend(boxed_key_for_recipients);
@@ -162,7 +163,7 @@ pub fn decrypt(cyphertext: & [u8], secret_key: &[u8; 32]) -> Option<Vec<u8>>{
     let mut my_key : [u8; KEY_NUM_BYTES] = [0; KEY_NUM_BYTES];
 
     let mut _key : [u8; _KEY_NUM_BYTES] = [0; _KEY_NUM_BYTES];
-    let mut key : &[u8; KEY_NUM_BYTES] = &[1; 32];
+    let mut key : &[u8; KEY_NUM_BYTES] = &[0; 32];
 
     let mut num_recps = 0;
     let mut unbox_code = -1;
