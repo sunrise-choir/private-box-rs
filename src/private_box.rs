@@ -17,8 +17,17 @@ const NONCE_NUM_BYTES: usize = 24;
 const KEY_NUM_BYTES: usize = 32;
 const _KEY_NUM_BYTES: usize = KEY_NUM_BYTES + 1;
 
-/// Must be called before using `private_box::encrypt` or `private_box::decrypt`.
-/// Initialises libsodium.
+/// libsodium must be initialised before calling `encrypt` or `decrypt`.
+/// If you're using other libsodium based libraries that already initialise libsodium, you can omit
+/// the call to `init`.
+/// `init` is provided as a convenience function and the code is only:
+/// ```
+///pub fn init(){
+///    unsafe{
+///        sodium_init();
+///    }
+///}
+/// ```
 pub fn init(){
     unsafe{
         sodium_init();
@@ -238,4 +247,7 @@ mod tests {
         assert_eq!(alice_result.unwrap(), msg);
         assert_eq!(bob_result.unwrap(), msg);
     }
+    //TODO: Test passing too many recipients errors.
+    //TODO: Test can encrypt / decrypt up to 255 recips after setting a cutom max.
+    //TODO: Test passing more than 255 or less than 1 errors.
 }
