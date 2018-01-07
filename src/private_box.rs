@@ -158,15 +158,17 @@ const BOXED_KEY_SIZE_BYTES : usize = 32 + 1 + 16;
 ///
 ///```
 pub fn decrypt(cyphertext: & [u8], secret_key: &[u8; 32]) -> Option<Vec<u8>>{
+    println!("starting decrypt");
     let nonce = array_ref![cyphertext, 0, 24];
     let onetime_pk = array_ref![cyphertext, 24, 32];
     let mut my_key : [u8; KEY_NUM_BYTES] = [0; KEY_NUM_BYTES];
 
     let mut _key : [u8; _KEY_NUM_BYTES] = [0; _KEY_NUM_BYTES];
-    let mut key : &[u8; KEY_NUM_BYTES] = &[0; 32];
+    let mut key : [u8; KEY_NUM_BYTES] = [0; 32];
 
     let mut num_recps = 0;
     let mut unbox_code = -1;
+    let mut did_unbox = false;
 
     unsafe{
         crypto_scalarmult(& mut my_key, secret_key, onetime_pk);
@@ -175,7 +177,7 @@ pub fn decrypt(cyphertext: & [u8], secret_key: &[u8; 32]) -> Option<Vec<u8>>{
     for i in 0..MAX_RECIPIENTS {
         let offset = START_BYTE_NUM + BOXED_KEY_SIZE_BYTES * i;
         if (offset + BOXED_KEY_SIZE_BYTES) > (cyphertext.len() - 16){
-            break; 
+            continue; 
         }
         let boxed_key_chunk = array_ref![cyphertext, offset, BOXED_KEY_SIZE_BYTES];
 
@@ -184,23 +186,24 @@ pub fn decrypt(cyphertext: & [u8], secret_key: &[u8; 32]) -> Option<Vec<u8>>{
         }
         if unbox_code == 0 {
             num_recps = _key[0];
-            key = array_ref![_key, 1, KEY_NUM_BYTES];
-            break;
+            key = array_ref![_key, 1, KEY_NUM_BYTES].clone();
+            did_unbox = true;
+            continue;
         }
     }
 
-    match unbox_code {
-        0 =>  {   
+    match did_unbox {
+        true =>  {   
             let offset = START_BYTE_NUM + BOXED_KEY_SIZE_BYTES * num_recps as usize;
             let boxed_msg_len = cyphertext.len() - offset;
             let mut result = vec![0; boxed_msg_len - crypto_secretbox_MACBYTES ];
 
             unsafe{
-                crypto_secretbox_open_easy(result.as_mut_ptr(), &cyphertext[offset], boxed_msg_len as u64, nonce, key);
+                crypto_secretbox_open_easy(result.as_mut_ptr(), &cyphertext[offset], boxed_msg_len as u64, nonce, &key);
             }
             Some(result) 
         },
-        _ => None,
+        false => None,
     }
 } 
 
