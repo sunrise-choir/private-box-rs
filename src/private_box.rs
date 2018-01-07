@@ -10,6 +10,8 @@ use libsodium_sys::{
     crypto_secretbox_MACBYTES,
     sodium_memzero,
 };
+
+use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::{PublicKey, PUBLICKEYBYTES, SecretKey, SECRETKEYBYTES};
 use std::cmp;
 
 const MAX_RECIPIENTS : usize = 7;
@@ -40,29 +42,19 @@ pub fn init(){
 ///
 ///# Example
 ///```
-///extern crate libsodium_sys;
 ///extern crate private_box;
+///extern crate sodiumoxide;
 ///
 ///use private_box::{init, encrypt, decrypt};
-///use libsodium_sys::{
-///     crypto_box_PUBLICKEYBYTES,
-///     crypto_box_SECRETKEYBYTES,
-///     crypto_box_keypair,
-///};
+///use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::gen_keypair;
 ///fn main() {
 ///    let msg : [u8; 3] = [0,1,2];
-///    let mut alice_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
-///    let mut alice_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
-///    let mut bob_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
-///    let mut bob_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
 ///
 ///    init();
-///    unsafe {
-///        crypto_box_keypair(& mut alice_pk, & mut alice_sk);
-///        crypto_box_keypair(& mut bob_pk, & mut bob_sk);
-///    }
+///    let (alice_pk, alice_sk) = gen_keypair();
+///    let (bob_pk, bob_sk) = gen_keypair();
 ///
-///    let recps: [[u8; 32]; 2] = [alice_pk, bob_pk];
+///    let recps = [alice_pk, bob_pk];
 ///    let cypher = encrypt(&msg, &recps);
 ///
 ///    let alice_result = decrypt(&cypher, &alice_sk);
@@ -71,9 +63,8 @@ pub fn init(){
 ///    assert_eq!(alice_result.unwrap(), msg);
 ///    assert_eq!(bob_result.unwrap(), msg);
 ///}
-///
 ///```
-pub fn encrypt(plaintext: & [u8], recipients: &[[u8; 32]]) -> Vec<u8>{
+pub fn encrypt(plaintext: & [u8], recipients: &[PublicKey]) -> Vec<u8>{
 
     let mut nonce : [u8; NONCE_NUM_BYTES] = [0; NONCE_NUM_BYTES]; 
     let mut key : [u8; KEY_NUM_BYTES] = [0; KEY_NUM_BYTES]; 
@@ -92,10 +83,11 @@ pub fn encrypt(plaintext: & [u8], recipients: &[[u8; 32]]) -> Vec<u8>{
         .iter()
         .flat_map(|recipient|{
             let mut cyphertext : Vec<u8> = vec![0; _KEY_NUM_BYTES + crypto_secretbox_MACBYTES];
+            let recipient_bytes = array_ref![recipient.as_ref(), 0, PUBLICKEYBYTES];
 
             let mut skey : [u8; KEY_NUM_BYTES] = [0; KEY_NUM_BYTES];
             unsafe{
-                crypto_scalarmult(& mut skey, & one_time_secretkey, recipient);
+                crypto_scalarmult(& mut skey, & one_time_secretkey, recipient_bytes);
                 crypto_secretbox_easy(cyphertext.as_mut_ptr(), _key.as_ptr(), _key.len() as u64, &nonce, &skey);
                 sodium_memzero(skey.as_mut_ptr(), skey.len());
             }
@@ -133,29 +125,19 @@ const BOXED_KEY_SIZE_BYTES : usize = 32 + 1 + 16;
 ///
 ///# Example
 ///```
-///extern crate libsodium_sys;
 ///extern crate private_box;
+///extern crate sodiumoxide;
 ///
 ///use private_box::{init, encrypt, decrypt};
-///use libsodium_sys::{
-///     crypto_box_PUBLICKEYBYTES,
-///     crypto_box_SECRETKEYBYTES,
-///     crypto_box_keypair,
-///};
+///use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::gen_keypair;
 ///fn main() {
 ///    let msg : [u8; 3] = [0,1,2];
-///    let mut alice_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
-///    let mut alice_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
-///    let mut bob_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
-///    let mut bob_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
 ///
 ///    init();
-///    unsafe {
-///        crypto_box_keypair(& mut alice_pk, & mut alice_sk);
-///        crypto_box_keypair(& mut bob_pk, & mut bob_sk);
-///    }
+///    let (alice_pk, alice_sk) = gen_keypair();
+///    let (bob_pk, bob_sk) = gen_keypair();
 ///
-///    let recps: [[u8; 32]; 2] = [alice_pk, bob_pk];
+///    let recps = [alice_pk, bob_pk];
 ///    let cypher = encrypt(&msg, &recps);
 ///
 ///    let alice_result = decrypt(&cypher, &alice_sk);
@@ -166,10 +148,10 @@ const BOXED_KEY_SIZE_BYTES : usize = 32 + 1 + 16;
 ///}
 ///
 ///```
-pub fn decrypt(cyphertext: & [u8], secret_key: &[u8; 32]) -> Option<Vec<u8>>{
-    println!("starting decrypt");
+pub fn decrypt(cyphertext: & [u8], secret_key: &SecretKey) -> Option<Vec<u8>>{
     let nonce = array_ref![cyphertext, 0, 24];
     let onetime_pk = array_ref![cyphertext, 24, 32];
+    let secret_key_bytes = array_ref![secret_key[..], 0, SECRETKEYBYTES];
     let mut my_key : [u8; KEY_NUM_BYTES] = [0; KEY_NUM_BYTES];
 
     let mut _key : [u8; _KEY_NUM_BYTES] = [0; _KEY_NUM_BYTES];
@@ -180,7 +162,7 @@ pub fn decrypt(cyphertext: & [u8], secret_key: &[u8; 32]) -> Option<Vec<u8>>{
     let mut did_unbox = false;
 
     unsafe{
-        crypto_scalarmult(& mut my_key, secret_key, onetime_pk);
+        crypto_scalarmult(& mut my_key, secret_key_bytes, onetime_pk);
     }
 
     for i in 0..MAX_RECIPIENTS {
@@ -219,26 +201,17 @@ pub fn decrypt(cyphertext: & [u8], secret_key: &[u8; 32]) -> Option<Vec<u8>>{
 #[cfg(test)]
 mod tests {
     use private_box::{init, encrypt, decrypt};
-    use libsodium_sys::{
-        crypto_box_PUBLICKEYBYTES,
-        crypto_box_SECRETKEYBYTES,
-        crypto_box_keypair,
-    };
+    use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::gen_keypair;
+
     #[test]
     fn simple() {
         let msg : [u8; 3] = [0,1,2];
-        let mut alice_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
-        let mut alice_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
-        let mut bob_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
-        let mut bob_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
 
         init();
-        unsafe {
-            crypto_box_keypair(& mut alice_pk, & mut alice_sk);
-            crypto_box_keypair(& mut bob_pk, & mut bob_sk);
-        }
+        let (alice_pk, alice_sk) = gen_keypair();
+        let (bob_pk, bob_sk) = gen_keypair();
 
-        let recps: [[u8; 32]; 2] = [alice_pk, bob_pk];
+        let recps = [alice_pk, bob_pk];
         let cypher = encrypt(&msg, &recps);
 
         let alice_result = decrypt(&cypher, &alice_sk);
