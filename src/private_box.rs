@@ -158,7 +158,7 @@ pub fn decrypt(cyphertext: & [u8], secret_key: &SecretKey) -> Option<Vec<u8>>{
     let mut key : [u8; KEY_NUM_BYTES] = [0; 32];
 
     let mut num_recps = 0;
-    let mut unbox_code = -1;
+    let mut unbox_code;
     let mut did_unbox = false;
 
     unsafe{
@@ -201,7 +201,40 @@ pub fn decrypt(cyphertext: & [u8], secret_key: &SecretKey) -> Option<Vec<u8>>{
 #[cfg(test)]
 mod tests {
     use private_box::{init, encrypt, decrypt};
-    use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::gen_keypair;
+    use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::{PublicKey, SecretKey, SECRETKEYBYTES, PUBLICKEYBYTES, gen_keypair};
+    use serde_json;
+
+    use std::error::Error;
+    use std::fs::File;
+    use std::path::Path;
+
+    use base64::decode;
+
+    #[derive(Serialize, Deserialize)]
+    #[allow(non_snake_case)]
+    struct Key {
+       secretKey: String,
+       publicKey: String
+    }
+
+    #[derive(Serialize, Deserialize)]
+    #[allow(non_snake_case)]
+    struct TestData {
+        cypherText : String,
+        msg : String,
+        keys: Vec<Key>,
+    }
+
+    fn read_test_data_from_file<P: AsRef<Path>>(path: P) -> Result<TestData, Box<Error>> {
+        // Open the file in read-only mode.
+        let file = File::open(path)?;
+
+        // Read the JSON contents of the file as an instance of `User`.
+        let u = serde_json::from_reader(file)?;
+
+        // Return the `User`.
+        Ok(u)
+    }
 
     #[test]
     fn simple() {
@@ -214,6 +247,32 @@ mod tests {
         let recps = [alice_pk, bob_pk];
         let cypher = encrypt(&msg, &recps);
 
+        let alice_result = decrypt(&cypher, &alice_sk);
+        let bob_result = decrypt(&cypher, &bob_sk);
+
+        assert_eq!(alice_result.unwrap(), msg);
+        assert_eq!(bob_result.unwrap(), msg);
+    }
+
+    #[test]
+    fn is_js_compatible(){
+        let test_data = read_test_data_from_file("./test/simple.json").unwrap();
+         
+        let cypher = decode(&test_data.cypherText).unwrap();
+        let msg = decode(&test_data.msg).unwrap();
+        let keys : Vec<(PublicKey, SecretKey)> = test_data.keys.iter().map(|key|{
+            let mut pub_key : [u8; PUBLICKEYBYTES] = [0; 32];
+            let mut sec_key : [u8; SECRETKEYBYTES] = [0; 32];
+            pub_key.copy_from_slice(&decode(&key.publicKey).unwrap());
+            sec_key.copy_from_slice(&decode(&key.secretKey).unwrap());
+                
+            (PublicKey(pub_key), SecretKey(sec_key)) 
+        }).collect();
+
+        let (_, ref alice_sk) = keys[0];
+        let (_, ref bob_sk) =keys[1];
+
+        init();
         let alice_result = decrypt(&cypher, &alice_sk);
         let bob_result = decrypt(&cypher, &bob_sk);
 
