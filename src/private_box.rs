@@ -121,7 +121,7 @@ pub fn encrypt(plaintext: & [u8], recipients: &[PublicKey]) -> Vec<u8>{
 const START_BYTE_NUM : usize = 24 + 32;
 const BOXED_KEY_SIZE_BYTES : usize = 32 + 1 + 16;
 
-///Attempt to decrypt a private-box message, using your secret key. If you were an intended recipient then the decrypted message is returned as `Some(Vec<u8>)`. If it was not for you, then `None` will be returned.
+///Attempt to decrypt a private-box message, using your secret key. If you were an intended recipient then the decrypted message is returned as `Ok(Vec<u8>)`. If it was not for you, then `Err(())` will be returned.
 ///
 ///# Example
 ///```
@@ -148,7 +148,7 @@ const BOXED_KEY_SIZE_BYTES : usize = 32 + 1 + 16;
 ///}
 ///
 ///```
-pub fn decrypt(cyphertext: & [u8], secret_key: &SecretKey) -> Option<Vec<u8>>{
+pub fn decrypt(cyphertext: & [u8], secret_key: &SecretKey) -> Result<Vec<u8>, ()>{
     let nonce = array_ref![cyphertext, 0, 24];
     let onetime_pk = array_ref![cyphertext, 24, 32];
     let secret_key_bytes = array_ref![secret_key[..], 0, SECRETKEYBYTES];
@@ -192,9 +192,9 @@ pub fn decrypt(cyphertext: & [u8], secret_key: &SecretKey) -> Option<Vec<u8>>{
             unsafe{
                 crypto_secretbox_open_easy(result.as_mut_ptr(), &cyphertext[offset], boxed_msg_len as u64, nonce, &key);
             }
-            Some(result) 
+            Ok(result) 
         },
-        false => None,
+        false => Err(()),
     }
 } 
 
@@ -261,17 +261,20 @@ mod tests {
          
         let cypher = decode(&test_data.cypherText).unwrap();
         let msg = decode(&test_data.msg).unwrap();
-        let keys : Vec<(PublicKey, SecretKey)> = test_data.keys.iter().map(|key|{
-            let mut pub_key : [u8; PUBLICKEYBYTES] = [0; 32];
-            let mut sec_key : [u8; SECRETKEYBYTES] = [0; 32];
-            pub_key.copy_from_slice(&decode(&key.publicKey).unwrap());
-            sec_key.copy_from_slice(&decode(&key.secretKey).unwrap());
-                
-            (PublicKey(pub_key), SecretKey(sec_key)) 
-        }).collect();
+        let keys : Vec<(PublicKey, SecretKey)> = test_data.keys
+            .iter()
+            .map(|key|{
+                let mut pub_key : [u8; PUBLICKEYBYTES] = [0; 32];
+                let mut sec_key : [u8; SECRETKEYBYTES] = [0; 32];
+                pub_key.copy_from_slice(&decode(&key.publicKey).unwrap());
+                sec_key.copy_from_slice(&decode(&key.secretKey).unwrap());
+                    
+                (PublicKey(pub_key), SecretKey(sec_key)) 
+            })
+            .collect();
 
         let (_, ref alice_sk) = keys[0];
-        let (_, ref bob_sk) =keys[1];
+        let (_, ref bob_sk) = keys[1];
 
         init();
         let alice_result = decrypt(&cypher, &alice_sk);
@@ -280,7 +283,7 @@ mod tests {
         assert_eq!(alice_result.unwrap(), msg);
         assert_eq!(bob_result.unwrap(), msg);
     }
-    //TODO: Test passing too many recipients errors.
-    //TODO: Test can encrypt / decrypt up to 255 recips after setting a cutom max.
-    //TODO: Test passing more than 255 or less than 1 errors.
+    //TODO: passing too many recipients errors.
+    //TODO: can encrypt / decrypt up to 255 recips after setting a cutom max.
+    //TODO: passing more than 255 or less than 1 errors.
 }
