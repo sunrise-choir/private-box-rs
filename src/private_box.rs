@@ -200,6 +200,7 @@ pub fn decrypt(cyphertext: & [u8], secret_key: &SecretKey) -> Option<Vec<u8>>{
 
 #[cfg(test)]
 mod tests {
+
     use private_box::{init, encrypt, decrypt};
     use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::{PublicKey, SecretKey, SECRETKEYBYTES, PUBLICKEYBYTES, gen_keypair};
     use serde_json;
