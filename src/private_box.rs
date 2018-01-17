@@ -66,6 +66,10 @@ pub fn init(){
 ///```
 pub fn encrypt(plaintext: & [u8], recipients: &[PublicKey]) -> Vec<u8>{
 
+    if recipients.len() > MAX_RECIPIENTS || recipients.len() == 0 {
+        panic!("Number of recipients must be less than {}, greater than 0", MAX_RECIPIENTS); 
+    }
+
     let mut nonce : [u8; NONCE_NUM_BYTES] = [0; NONCE_NUM_BYTES]; 
     let mut key : [u8; KEY_NUM_BYTES] = [0; KEY_NUM_BYTES]; 
     let mut one_time_pubkey : [u8; crypto_box_PUBLICKEYBYTES ] = [0; crypto_box_PUBLICKEYBYTES]; 
@@ -283,7 +287,28 @@ mod tests {
         assert_eq!(alice_result.unwrap(), msg);
         assert_eq!(bob_result.unwrap(), msg);
     }
-    //TODO: passing too many recipients errors.
-    //TODO: can encrypt / decrypt up to 255 recips after setting a cutom max.
-    //TODO: passing more than 255 or less than 1 errors.
+    #[test]
+    #[should_panic]
+    fn passing_too_many_recipients_panics(){
+        let msg : [u8; 3] = [0,1,2];
+
+        init();
+        let (alice_pk, _) = gen_keypair();
+
+        let recps = [alice_pk, alice_pk, alice_pk, alice_pk, alice_pk, alice_pk, alice_pk, alice_pk, alice_pk];
+        let _ = encrypt(&msg, &recps);
+   
+    }
+    #[test]
+    #[should_panic]
+    fn passing_zero_recipients_panics(){
+        let msg : [u8; 3] = [0,1,2];
+
+        init();
+
+        let recps : [PublicKey; 0] = [];
+        let _ = encrypt(&msg, &recps);
+    }
+
+
 }
