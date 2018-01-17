@@ -10,6 +10,8 @@ use libsodium_sys::{
     crypto_secretbox_MACBYTES,
     sodium_memzero,
 };
+
+use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::{PublicKey, PUBLICKEYBYTES, SecretKey, SECRETKEYBYTES};
 use std::cmp;
 
 const MAX_RECIPIENTS : usize = 7;
@@ -17,8 +19,17 @@ const NONCE_NUM_BYTES: usize = 24;
 const KEY_NUM_BYTES: usize = 32;
 const _KEY_NUM_BYTES: usize = KEY_NUM_BYTES + 1;
 
-/// Must be called before using `private_box::encrypt` or `private_box::decrypt`.
-/// Initialises libsodium.
+/// libsodium must be initialised before calling `encrypt` or `decrypt`.
+/// If you're using other libsodium based libraries that already initialise libsodium, you can omit
+/// the call to `init`.
+/// `init` is provided as a convenience function and the code is only:
+/// ```
+///pub fn init(){
+///    unsafe{
+///        sodium_init();
+///    }
+///}
+/// ```
 pub fn init(){
     unsafe{
         sodium_init();
@@ -31,29 +42,19 @@ pub fn init(){
 ///
 ///# Example
 ///```
-///extern crate libsodium_sys;
 ///extern crate private_box;
+///extern crate sodiumoxide;
 ///
 ///use private_box::{init, encrypt, decrypt};
-///use libsodium_sys::{
-///     crypto_box_PUBLICKEYBYTES,
-///     crypto_box_SECRETKEYBYTES,
-///     crypto_box_keypair,
-///};
+///use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::gen_keypair;
 ///fn main() {
 ///    let msg : [u8; 3] = [0,1,2];
-///    let mut alice_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
-///    let mut alice_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
-///    let mut bob_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
-///    let mut bob_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
 ///
 ///    init();
-///    unsafe {
-///        crypto_box_keypair(& mut alice_pk, & mut alice_sk);
-///        crypto_box_keypair(& mut bob_pk, & mut bob_sk);
-///    }
+///    let (alice_pk, alice_sk) = gen_keypair();
+///    let (bob_pk, bob_sk) = gen_keypair();
 ///
-///    let recps: [[u8; 32]; 2] = [alice_pk, bob_pk];
+///    let recps = [alice_pk, bob_pk];
 ///    let cypher = encrypt(&msg, &recps);
 ///
 ///    let alice_result = decrypt(&cypher, &alice_sk);
@@ -62,9 +63,8 @@ pub fn init(){
 ///    assert_eq!(alice_result.unwrap(), msg);
 ///    assert_eq!(bob_result.unwrap(), msg);
 ///}
-///
 ///```
-pub fn encrypt(plaintext: & [u8], recipients: &[[u8; 32]]) -> Vec<u8>{
+pub fn encrypt(plaintext: & [u8], recipients: &[PublicKey]) -> Vec<u8>{
 
     let mut nonce : [u8; NONCE_NUM_BYTES] = [0; NONCE_NUM_BYTES]; 
     let mut key : [u8; KEY_NUM_BYTES] = [0; KEY_NUM_BYTES]; 
@@ -83,16 +83,17 @@ pub fn encrypt(plaintext: & [u8], recipients: &[[u8; 32]]) -> Vec<u8>{
         .iter()
         .flat_map(|recipient|{
             let mut cyphertext : Vec<u8> = vec![0; _KEY_NUM_BYTES + crypto_secretbox_MACBYTES];
+            let recipient_bytes = array_ref![recipient.as_ref(), 0, PUBLICKEYBYTES];
 
             let mut skey : [u8; KEY_NUM_BYTES] = [0; KEY_NUM_BYTES];
             unsafe{
-                crypto_scalarmult(& mut skey, & one_time_secretkey, recipient);
+                crypto_scalarmult(& mut skey, & one_time_secretkey, recipient_bytes);
                 crypto_secretbox_easy(cyphertext.as_mut_ptr(), _key.as_ptr(), _key.len() as u64, &nonce, &skey);
                 sodium_memzero(skey.as_mut_ptr(), skey.len());
             }
             cyphertext
         })
-    .collect::<Vec<u8>>();
+        .collect::<Vec<u8>>();
 
     let mut boxed_message : Vec<u8> = vec![0; plaintext.len() + crypto_secretbox_MACBYTES];
 
@@ -120,33 +121,23 @@ pub fn encrypt(plaintext: & [u8], recipients: &[[u8; 32]]) -> Vec<u8>{
 const START_BYTE_NUM : usize = 24 + 32;
 const BOXED_KEY_SIZE_BYTES : usize = 32 + 1 + 16;
 
-///Attempt to decrypt a private-box message, using your secret key. If you were an intended recipient then the decrypted message is returned as `Some(Vec<u8>)`. If it was not for you, then `None` will be returned.
+///Attempt to decrypt a private-box message, using your secret key. If you were an intended recipient then the decrypted message is returned as `Ok(Vec<u8>)`. If it was not for you, then `Err(())` will be returned.
 ///
 ///# Example
 ///```
-///extern crate libsodium_sys;
 ///extern crate private_box;
+///extern crate sodiumoxide;
 ///
 ///use private_box::{init, encrypt, decrypt};
-///use libsodium_sys::{
-///     crypto_box_PUBLICKEYBYTES,
-///     crypto_box_SECRETKEYBYTES,
-///     crypto_box_keypair,
-///};
+///use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::gen_keypair;
 ///fn main() {
 ///    let msg : [u8; 3] = [0,1,2];
-///    let mut alice_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
-///    let mut alice_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
-///    let mut bob_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
-///    let mut bob_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
 ///
 ///    init();
-///    unsafe {
-///        crypto_box_keypair(& mut alice_pk, & mut alice_sk);
-///        crypto_box_keypair(& mut bob_pk, & mut bob_sk);
-///    }
+///    let (alice_pk, alice_sk) = gen_keypair();
+///    let (bob_pk, bob_sk) = gen_keypair();
 ///
-///    let recps: [[u8; 32]; 2] = [alice_pk, bob_pk];
+///    let recps = [alice_pk, bob_pk];
 ///    let cypher = encrypt(&msg, &recps);
 ///
 ///    let alice_result = decrypt(&cypher, &alice_sk);
@@ -157,27 +148,27 @@ const BOXED_KEY_SIZE_BYTES : usize = 32 + 1 + 16;
 ///}
 ///
 ///```
-pub fn decrypt(cyphertext: & [u8], secret_key: &[u8; 32]) -> Option<Vec<u8>>{
-    println!("starting decrypt");
+pub fn decrypt(cyphertext: & [u8], secret_key: &SecretKey) -> Result<Vec<u8>, ()>{
     let nonce = array_ref![cyphertext, 0, 24];
     let onetime_pk = array_ref![cyphertext, 24, 32];
+    let secret_key_bytes = array_ref![secret_key[..], 0, SECRETKEYBYTES];
     let mut my_key : [u8; KEY_NUM_BYTES] = [0; KEY_NUM_BYTES];
 
     let mut _key : [u8; _KEY_NUM_BYTES] = [0; _KEY_NUM_BYTES];
     let mut key : [u8; KEY_NUM_BYTES] = [0; 32];
 
     let mut num_recps = 0;
-    let mut unbox_code = -1;
+    let mut unbox_code;
     let mut did_unbox = false;
 
     unsafe{
-        crypto_scalarmult(& mut my_key, secret_key, onetime_pk);
+        crypto_scalarmult(& mut my_key, secret_key_bytes, onetime_pk);
     }
 
     for i in 0..MAX_RECIPIENTS {
         let offset = START_BYTE_NUM + BOXED_KEY_SIZE_BYTES * i;
         if (offset + BOXED_KEY_SIZE_BYTES) > (cyphertext.len() - 16){
-            continue; 
+            break; 
         }
         let boxed_key_chunk = array_ref![cyphertext, offset, BOXED_KEY_SIZE_BYTES];
 
@@ -201,35 +192,60 @@ pub fn decrypt(cyphertext: & [u8], secret_key: &[u8; 32]) -> Option<Vec<u8>>{
             unsafe{
                 crypto_secretbox_open_easy(result.as_mut_ptr(), &cyphertext[offset], boxed_msg_len as u64, nonce, &key);
             }
-            Some(result) 
+            Ok(result) 
         },
-        false => None,
+        false => Err(()),
     }
 } 
 
 #[cfg(test)]
 mod tests {
+
     use private_box::{init, encrypt, decrypt};
-    use libsodium_sys::{
-        crypto_box_PUBLICKEYBYTES,
-        crypto_box_SECRETKEYBYTES,
-        crypto_box_keypair,
-    };
+    use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::{PublicKey, SecretKey, SECRETKEYBYTES, PUBLICKEYBYTES, gen_keypair};
+    use serde_json;
+
+    use std::error::Error;
+    use std::fs::File;
+    use std::path::Path;
+
+    use base64::decode;
+
+    #[derive(Serialize, Deserialize)]
+    #[allow(non_snake_case)]
+    struct Key {
+       secretKey: String,
+       publicKey: String
+    }
+
+    #[derive(Serialize, Deserialize)]
+    #[allow(non_snake_case)]
+    struct TestData {
+        cypherText : String,
+        msg : String,
+        keys: Vec<Key>,
+    }
+
+    fn read_test_data_from_file<P: AsRef<Path>>(path: P) -> Result<TestData, Box<Error>> {
+        // Open the file in read-only mode.
+        let file = File::open(path)?;
+
+        // Read the JSON contents of the file as an instance of `User`.
+        let u = serde_json::from_reader(file)?;
+
+        // Return the `User`.
+        Ok(u)
+    }
+
     #[test]
     fn simple() {
         let msg : [u8; 3] = [0,1,2];
-        let mut alice_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
-        let mut alice_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
-        let mut bob_pk : [u8; crypto_box_PUBLICKEYBYTES] = [0; crypto_box_PUBLICKEYBYTES]; 
-        let mut bob_sk : [u8; crypto_box_SECRETKEYBYTES] = [0; crypto_box_SECRETKEYBYTES]; 
 
         init();
-        unsafe {
-            crypto_box_keypair(& mut alice_pk, & mut alice_sk);
-            crypto_box_keypair(& mut bob_pk, & mut bob_sk);
-        }
+        let (alice_pk, alice_sk) = gen_keypair();
+        let (bob_pk, bob_sk) = gen_keypair();
 
-        let recps: [[u8; 32]; 2] = [alice_pk, bob_pk];
+        let recps = [alice_pk, bob_pk];
         let cypher = encrypt(&msg, &recps);
 
         let alice_result = decrypt(&cypher, &alice_sk);
@@ -238,4 +254,36 @@ mod tests {
         assert_eq!(alice_result.unwrap(), msg);
         assert_eq!(bob_result.unwrap(), msg);
     }
+
+    #[test]
+    fn is_js_compatible(){
+        let test_data = read_test_data_from_file("./test/simple.json").unwrap();
+         
+        let cypher = decode(&test_data.cypherText).unwrap();
+        let msg = decode(&test_data.msg).unwrap();
+        let keys : Vec<(PublicKey, SecretKey)> = test_data.keys
+            .iter()
+            .map(|key|{
+                let mut pub_key : [u8; PUBLICKEYBYTES] = [0; 32];
+                let mut sec_key : [u8; SECRETKEYBYTES] = [0; 32];
+                pub_key.copy_from_slice(&decode(&key.publicKey).unwrap());
+                sec_key.copy_from_slice(&decode(&key.secretKey).unwrap());
+                    
+                (PublicKey(pub_key), SecretKey(sec_key)) 
+            })
+            .collect();
+
+        let (_, ref alice_sk) = keys[0];
+        let (_, ref bob_sk) = keys[1];
+
+        init();
+        let alice_result = decrypt(&cypher, &alice_sk);
+        let bob_result = decrypt(&cypher, &bob_sk);
+
+        assert_eq!(alice_result.unwrap(), msg);
+        assert_eq!(bob_result.unwrap(), msg);
+    }
+    //TODO: passing too many recipients errors.
+    //TODO: can encrypt / decrypt up to 255 recips after setting a cutom max.
+    //TODO: passing more than 255 or less than 1 errors.
 }
