@@ -93,7 +93,7 @@ pub fn encrypt(plaintext: & [u8], recipients: &[PublicKey]) -> Vec<u8>{
             }
             cyphertext
         })
-    .collect::<Vec<u8>>();
+        .collect::<Vec<u8>>();
 
     let mut boxed_message : Vec<u8> = vec![0; plaintext.len() + crypto_secretbox_MACBYTES];
 
@@ -168,7 +168,7 @@ pub fn decrypt(cyphertext: & [u8], secret_key: &SecretKey) -> Result<Vec<u8>, ()
     for i in 0..MAX_RECIPIENTS {
         let offset = START_BYTE_NUM + BOXED_KEY_SIZE_BYTES * i;
         if (offset + BOXED_KEY_SIZE_BYTES) > (cyphertext.len() - 16){
-            continue; 
+            break; 
         }
         let boxed_key_chunk = array_ref![cyphertext, offset, BOXED_KEY_SIZE_BYTES];
 
