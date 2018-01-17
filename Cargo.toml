@@ -1,9 +1,10 @@
 [package]
 name = "private-box"
 description = "A direct port of https://github.com/auditdrivencrypto/private-box"
-version = "0.3.2"
+version = "0.3.3"
 authors = ["Piet Geursen <pietgeursen@gmail.com>"]
 license = "MIT"
+repository = "https://github.com/pietgeursen/private-box-rs"
 
 [dependencies]
 libsodium-sys = "0.0.16"
