@@ -2,6 +2,7 @@ extern crate libsodium_sys;
 extern crate sodiumoxide;
 #[macro_use]
 extern crate arrayref;
+extern crate rayon;
 
 
 #[cfg(test)]
