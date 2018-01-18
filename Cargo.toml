@@ -10,7 +10,6 @@ repository = "https://github.com/pietgeursen/private-box-rs"
 libsodium-sys = "0.0.16"
 sodiumoxide = "0.0.16"
 arrayref = "0.3.4"
-rayon = "0.9"
 
 [dev-dependencies]
 base64 = "0.9"

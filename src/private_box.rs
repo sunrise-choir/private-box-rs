@@ -12,7 +12,6 @@ use libsodium_sys::{
 };
 
 use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::{PublicKey, PUBLICKEYBYTES, SecretKey, SECRETKEYBYTES};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::cmp;
 
 const MAX_RECIPIENTS : usize = 7;
@@ -159,42 +158,34 @@ pub fn decrypt(cyphertext: & [u8], secret_key: &SecretKey) -> Result<Vec<u8>, ()
     let secret_key_bytes = array_ref![secret_key[..], 0, SECRETKEYBYTES];
     let mut my_key : [u8; KEY_NUM_BYTES] = [0; KEY_NUM_BYTES];
 
+    let mut _key : [u8; _KEY_NUM_BYTES] = [0; _KEY_NUM_BYTES];
+    let mut key : [u8; KEY_NUM_BYTES] = [0; 32];
+
+    let mut num_recps = 0;
+    let mut unbox_code;
+    let mut did_unbox = false;
+
     unsafe{
         crypto_scalarmult(& mut my_key, secret_key_bytes, onetime_pk);
     }
 
-    let option_tuple = (0..MAX_RECIPIENTS)
-        .into_par_iter()
-        .map(|i|{
-            let unbox_code;
-            let mut _key : [u8; _KEY_NUM_BYTES] = [0; _KEY_NUM_BYTES];
-            let mut key : [u8; KEY_NUM_BYTES] = [0; 32];
-            let mut num_recps = 0;
-            let mut did_unbox = false;
+    for i in 0..MAX_RECIPIENTS {
+        let offset = START_BYTE_NUM + BOXED_KEY_SIZE_BYTES * i;
+        if (offset + BOXED_KEY_SIZE_BYTES) > (cyphertext.len() - 16){
+            break; 
+        }
+        let boxed_key_chunk = array_ref![cyphertext, offset, BOXED_KEY_SIZE_BYTES];
 
-            let offset = START_BYTE_NUM + BOXED_KEY_SIZE_BYTES * i;
-            if (offset + BOXED_KEY_SIZE_BYTES) <= (cyphertext.len() - 16){
-                let boxed_key_chunk = array_ref![cyphertext, offset, BOXED_KEY_SIZE_BYTES];
-
-                unsafe {
-                    unbox_code = crypto_secretbox_open_easy(_key.as_mut_ptr(), boxed_key_chunk.as_ptr(), BOXED_KEY_SIZE_BYTES as u64, nonce, &my_key);
-                }
-                if unbox_code == 0 {
-                    num_recps = _key[0];
-                    key = array_ref![_key, 1, KEY_NUM_BYTES].clone();
-                    did_unbox = true;
-                }
-            }
-            (num_recps, did_unbox, key)
-        })
-        .find_any(|&(_, did_unbox, _)| {
-            did_unbox
-        });
-
-    let (num_recps, did_unbox, key)  = match option_tuple {
-        Some(tup) => tup,
-        None => {(0, false, [0u8; 32])}
-    };
+        unsafe {
+            unbox_code = crypto_secretbox_open_easy(_key.as_mut_ptr(), boxed_key_chunk.as_ptr(), BOXED_KEY_SIZE_BYTES as u64, nonce, &my_key);
+        }
+        if unbox_code == 0 {
+            num_recps = _key[0];
+            key = array_ref![_key, 1, KEY_NUM_BYTES].clone();
+            did_unbox = true;
+            continue;
+        }
+    }
 
     match did_unbox {
         true =>  {   
