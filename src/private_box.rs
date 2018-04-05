@@ -1,6 +1,6 @@
 use libsodium_sys::{
     sodium_init,
-    randombytes_buf, 
+    randombytes_buf,
     crypto_box_PUBLICKEYBYTES,
     crypto_box_SECRETKEYBYTES,
     crypto_box_keypair,
@@ -24,6 +24,8 @@ const _KEY_NUM_BYTES: usize = KEY_NUM_BYTES + 1;
 /// the call to `init`.
 /// `init` is provided as a convenience function and the code is only:
 /// ```
+///extern crate libsodium_sys;
+///use libsodium_sys::sodium_init;
 ///pub fn init(){
 ///    unsafe{
 ///        sodium_init();
@@ -67,13 +69,13 @@ pub fn init(){
 pub fn encrypt(plaintext: & [u8], recipients: &[PublicKey]) -> Vec<u8>{
 
     if recipients.len() > MAX_RECIPIENTS || recipients.len() == 0 {
-        panic!("Number of recipients must be less than {}, greater than 0", MAX_RECIPIENTS); 
+        panic!("Number of recipients must be less than {}, greater than 0", MAX_RECIPIENTS);
     }
 
-    let mut nonce : [u8; NONCE_NUM_BYTES] = [0; NONCE_NUM_BYTES]; 
-    let mut key : [u8; KEY_NUM_BYTES] = [0; KEY_NUM_BYTES]; 
-    let mut one_time_pubkey : [u8; crypto_box_PUBLICKEYBYTES ] = [0; crypto_box_PUBLICKEYBYTES]; 
-    let mut one_time_secretkey : [u8; crypto_box_SECRETKEYBYTES ] = [0; crypto_box_SECRETKEYBYTES]; 
+    let mut nonce : [u8; NONCE_NUM_BYTES] = [0; NONCE_NUM_BYTES];
+    let mut key : [u8; KEY_NUM_BYTES] = [0; KEY_NUM_BYTES];
+    let mut one_time_pubkey : [u8; crypto_box_PUBLICKEYBYTES ] = [0; crypto_box_PUBLICKEYBYTES];
+    let mut one_time_secretkey : [u8; crypto_box_SECRETKEYBYTES ] = [0; crypto_box_SECRETKEYBYTES];
     unsafe {
         randombytes_buf(nonce.as_mut_ptr(), NONCE_NUM_BYTES);
         randombytes_buf(key.as_mut_ptr(), KEY_NUM_BYTES);
@@ -105,7 +107,7 @@ pub fn encrypt(plaintext: & [u8], recipients: &[PublicKey]) -> Vec<u8>{
         crypto_secretbox_easy(boxed_message.as_mut_ptr(), plaintext.as_ptr(), plaintext.len() as u64, &nonce, &key);
     }
 
-    let mut result : Vec<u8> = Vec::with_capacity(NONCE_NUM_BYTES + KEY_NUM_BYTES + boxed_key_for_recipients.len() + boxed_message.len()); 
+    let mut result : Vec<u8> = Vec::with_capacity(NONCE_NUM_BYTES + KEY_NUM_BYTES + boxed_key_for_recipients.len() + boxed_message.len());
     result.extend_from_slice(&nonce.clone());
     result.extend_from_slice(&one_time_pubkey);
     result.extend(boxed_key_for_recipients);
@@ -120,7 +122,7 @@ pub fn encrypt(plaintext: & [u8], recipients: &[PublicKey]) -> Vec<u8>{
     }
 
     result
-} 
+}
 
 const START_BYTE_NUM : usize = 24 + 32;
 const BOXED_KEY_SIZE_BYTES : usize = 32 + 1 + 16;
@@ -172,7 +174,7 @@ pub fn decrypt(cyphertext: & [u8], secret_key: &SecretKey) -> Result<Vec<u8>, ()
     for i in 0..MAX_RECIPIENTS {
         let offset = START_BYTE_NUM + BOXED_KEY_SIZE_BYTES * i;
         if (offset + BOXED_KEY_SIZE_BYTES) > (cyphertext.len() - 16){
-            break; 
+            break;
         }
         let boxed_key_chunk = array_ref![cyphertext, offset, BOXED_KEY_SIZE_BYTES];
 
@@ -188,7 +190,7 @@ pub fn decrypt(cyphertext: & [u8], secret_key: &SecretKey) -> Result<Vec<u8>, ()
     }
 
     match did_unbox {
-        true =>  {   
+        true =>  {
             let offset = START_BYTE_NUM + BOXED_KEY_SIZE_BYTES * num_recps as usize;
             let boxed_msg_len = cyphertext.len() - offset;
             let mut result = vec![0; boxed_msg_len - crypto_secretbox_MACBYTES ];
@@ -196,11 +198,11 @@ pub fn decrypt(cyphertext: & [u8], secret_key: &SecretKey) -> Result<Vec<u8>, ()
             unsafe{
                 crypto_secretbox_open_easy(result.as_mut_ptr(), &cyphertext[offset], boxed_msg_len as u64, nonce, &key);
             }
-            Ok(result) 
+            Ok(result)
         },
         false => Err(()),
     }
-} 
+}
 
 #[cfg(test)]
 mod tests {
@@ -262,7 +264,7 @@ mod tests {
     #[test]
     fn is_js_compatible(){
         let test_data = read_test_data_from_file("./test/simple.json").unwrap();
-         
+
         let cypher = decode(&test_data.cypherText).unwrap();
         let msg = decode(&test_data.msg).unwrap();
         let keys : Vec<(PublicKey, SecretKey)> = test_data.keys
@@ -272,8 +274,8 @@ mod tests {
                 let mut sec_key : [u8; SECRETKEYBYTES] = [0; 32];
                 pub_key.copy_from_slice(&decode(&key.publicKey).unwrap());
                 sec_key.copy_from_slice(&decode(&key.secretKey).unwrap());
-                    
-                (PublicKey(pub_key), SecretKey(sec_key)) 
+
+                (PublicKey(pub_key), SecretKey(sec_key))
             })
             .collect();
 
@@ -297,7 +299,7 @@ mod tests {
 
         let recps = [alice_pk, alice_pk, alice_pk, alice_pk, alice_pk, alice_pk, alice_pk, alice_pk, alice_pk];
         let _ = encrypt(&msg, &recps);
-   
+
     }
     #[test]
     #[should_panic]
