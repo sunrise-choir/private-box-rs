@@ -14,7 +14,8 @@ use libsodium_sys::{
 use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::{PublicKey, PUBLICKEYBYTES, SecretKey, SECRETKEYBYTES};
 use std::cmp;
 
-const MAX_RECIPIENTS : usize = 7;
+
+const MAX_RECIPIENTS : usize = 255;
 const NONCE_NUM_BYTES: usize = 24;
 const KEY_NUM_BYTES: usize = 32;
 const _KEY_NUM_BYTES: usize = KEY_NUM_BYTES + 1;

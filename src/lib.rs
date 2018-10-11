@@ -18,3 +18,4 @@ extern crate serde_derive;
 mod private_box;
 pub use private_box::*;
 
+pub use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::{PublicKey, PUBLICKEYBYTES, SecretKey, SECRETKEYBYTES};
