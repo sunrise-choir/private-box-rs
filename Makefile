@@ -5,7 +5,7 @@ libsodium: download
 		git checkout origin/stable && \
 		rm -rf lib && \
 		./autogen.sh && \
-		./configure --prefix=$$SODIUM_INSTALL_DIR --disable-shared --enable-static --enable-pic --disable-pic && \
+		./configure --prefix=$$SODIUM_INSTALL_DIR --disable-shared --enable-static --enable-pic --disable-pie && \
 		make && \
 		make install
 
