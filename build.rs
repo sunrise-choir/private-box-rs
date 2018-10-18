@@ -2,6 +2,10 @@ use std::process::Command;
 use std::env;
 
 fn main() {
+    println!("rerun-if-env-changed=SODIUM_STATIC");
+    println!("rerun-if-env-changed=SODIUM_LIB_DIR");
+    println!("rerun-if-env-changed=SODIUM_INSTALL_DIR");
+
     match env::var("SODIUM_STATIC") {
         Ok(_) => {
             env::var("SODIUM_LIB_DIR").expect("SODIUM_LIB_DIR was not set");
