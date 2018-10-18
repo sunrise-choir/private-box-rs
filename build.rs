@@ -1,4 +1,4 @@
-use std::process::{Command, ExitStatus};
+use std::process::Command;
 use std::env;
 
 fn main() {
