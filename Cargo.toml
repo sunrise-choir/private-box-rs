@@ -1,7 +1,7 @@
 [package]
 name = "private-box"
 description = "A direct port of https://github.com/auditdrivencrypto/private-box"
-version = "0.4.3"
+version = "0.4.4"
 authors = ["Piet Geursen <pietgeursen@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/pietgeursen/private-box-rs"
