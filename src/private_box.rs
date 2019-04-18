@@ -297,8 +297,7 @@ mod tests {
 
         init();
         let (alice_pk, _) = gen_keypair();
-
-        let recps = [alice_pk, alice_pk, alice_pk, alice_pk, alice_pk, alice_pk, alice_pk, alice_pk, alice_pk];
+        let recps = vec![alice_pk; 33];
         let _ = encrypt(&msg, &recps);
 
     }
