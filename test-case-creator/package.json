@@ -1,0 +1,14 @@
+{
+  "name": "test-case-creator",
+  "version": "1.0.0",
+  "description": "generate private-box js compatibility test cases",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "private-box": "^0.3.0",
+    "sodium": "^3.0.2",
+    "tweetnacl": "^1.0.1"
+  }
+}

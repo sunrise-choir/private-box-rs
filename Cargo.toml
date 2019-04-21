@@ -1,19 +1,17 @@
 [package]
 name = "private-box"
 description = "A direct port of https://github.com/auditdrivencrypto/private-box"
-version = "0.4.5"
+version = "0.5.0"
 authors = ["Piet Geursen <pietgeursen@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/pietgeursen/private-box-rs"
-
-[lib]
-name = "private_box"
-crate-type = ["lib"]
+edition = "2018"
+documentation = "https://docs.rs/private-box"
+readme = "README.md"
+keywords = ["ssb", "scuttlebutt"]
 
 [dependencies]
-sodiumoxide = "0.0.16"
-arrayref = "0.3.4"
-libsodium-sys = "0.0.16"
+ssb-crypto = "~0.1.1"
 
 [dev-dependencies]
 base64 = "0.9"
