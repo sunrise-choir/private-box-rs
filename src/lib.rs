@@ -1,8 +1,4 @@
-extern crate libsodium_sys;
-extern crate sodiumoxide;
-#[macro_use]
-extern crate arrayref;
-
+extern crate ssb_crypto;
 
 #[cfg(test)]
 extern crate base64;
@@ -14,8 +10,7 @@ extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 
-
 mod private_box;
-pub use private_box::*;
+pub use crate::private_box::*;
 
-pub use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::{PublicKey, PUBLICKEYBYTES, SecretKey, SECRETKEYBYTES};
+pub use ssb_crypto::{PublicKey, SecretKey};
