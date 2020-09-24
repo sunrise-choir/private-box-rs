@@ -1,26 +1,64 @@
-use ssb_crypto::{
-    PublicKey,
-    SecretKey,
-};
+use core::mem::size_of;
+use ssb_crypto::{PublicKey, SecretKey};
+use zerocopy::{AsBytes, FromBytes};
 
 // TODO: turns out these things are used for more than just the handshake,
 // so the ssb_crypto submodule should probably be renamed.
-use ssb_crypto::handshake::{
-    derive_shared_secret_pk,
-    derive_shared_secret_sk,
-    EphPublicKey,
-    generate_ephemeral_keypair,
+use ssb_crypto::ephemeral::{
+    derive_shared_secret_pk, derive_shared_secret_sk, generate_ephemeral_keypair, EphPublicKey,
 };
-use ssb_crypto::secretbox;
-use ssb_crypto::utils::memzero;
+use ssb_crypto::secretbox::{Hmac, Key, Nonce};
 
-const MAX_RECIPIENTS : usize = 32;
+const MAX_RECIPIENTS: usize = 32;
 
 /// libsodium must be initialised before calling `encrypt` or `decrypt`.
 /// If you're using other libsodium based libraries that already initialise libsodium, you can omit
 /// the call to `init`.
+#[cfg(feature = "sodium")]
 pub fn init() {
-    ssb_crypto::init();
+    ssb_crypto::sodium::init();
+}
+
+#[derive(AsBytes, FromBytes)]
+#[repr(C, packed)]
+struct MsgKey {
+    recp_count: u8,
+    key: Key,
+}
+impl MsgKey {
+    fn zeroed() -> MsgKey {
+        MsgKey {
+            recp_count: 0,
+            key: Key([0; 32]),
+        }
+    }
+    fn as_array(&self) -> [u8; 33] {
+        let mut out = [0; 33];
+        out.copy_from_slice(self.as_bytes());
+        out
+    }
+}
+
+#[derive(AsBytes, FromBytes)]
+#[repr(C, packed)]
+struct BoxedKey {
+    hmac: Hmac,
+    msg_key: [u8; 33],
+}
+
+/// == 72 + recps.len() * 49 + text.len()
+pub fn encrypted_size(text: &[u8], recps: &[PublicKey]) -> usize {
+    size_of::<Nonce>()                        //   24
+        + size_of::<EphPublicKey>()           // + 32
+        + recps.len() * size_of::<BoxedKey>() // + recps.len() * 49
+        + size_of::<Hmac>()                   // + 16
+        + text.len()
+}
+
+fn set_prefix<'a>(buf: &'a mut [u8], prefix: &[u8]) -> &'a mut [u8] {
+    let (p, rest) = buf.split_at_mut(prefix.len());
+    p.copy_from_slice(prefix);
+    rest
 }
 
 /// Takes the message you want to encrypt, and an array of recipient public keys.
@@ -34,68 +72,71 @@ pub fn init() {
 /// extern crate private_box;
 /// extern crate ssb_crypto;
 ///
-/// use private_box::{init, encrypt, decrypt};
-/// use ssb_crypto::generate_longterm_keypair;
+/// use private_box::{encrypt, decrypt};
+/// use ssb_crypto::Keypair;
 ///
 /// fn main() {
-///     init();
 ///     let msg = "hello!".as_bytes();
 ///
-///     let (alice_pk, alice_sk) = generate_longterm_keypair();
-///     let (bob_pk, bob_sk) = generate_longterm_keypair();
+///     let alice = Keypair::generate();
+///     let bob = Keypair::generate();
 ///
-///     let recps = [alice_pk, bob_pk];
+///     let recps = [alice.public, bob.public];
 ///     let cypher = encrypt(msg, &recps);
 ///
-///     let alice_result = decrypt(&cypher, &alice_sk);
-///     let bob_result = decrypt(&cypher, &bob_sk);
+///     let alice_result = decrypt(&cypher, &alice.secret);
+///     let bob_result = decrypt(&cypher, &bob.secret);
 ///
 ///     assert_eq!(alice_result.unwrap(), msg);
 ///     assert_eq!(bob_result.unwrap(), msg);
 /// }
 /// ```
 pub fn encrypt(plaintext: &[u8], recipients: &[PublicKey]) -> Vec<u8> {
-
-    if recipients.len() > MAX_RECIPIENTS || recipients.len() == 0 {
-        panic!("Number of recipients must be less than {}, greater than 0", MAX_RECIPIENTS);
-    }
-
-    let nonce = secretbox::gen_nonce();
-    let key = secretbox::gen_key();
-    let (eph_pk, eph_sk) = generate_ephemeral_keypair();
-
-    // The "key" that's encrypted for each recipient is 33 bytes:
-    // the first byte is the number of recipients,
-    // other 32 bytes are the secretbox key.
-    let mut key_with_prefix = [0; 33];
-    key_with_prefix[0] = recipients.len() as u8;
-    key_with_prefix[1..].copy_from_slice(&key[..]);
-
-    let boxed_key_for_recipients = recipients
-        .iter()
-        .flat_map(|recip_pk| {
-            let secret = derive_shared_secret_pk(&eph_sk, recip_pk).unwrap(); // TODO: `as secretbox::Key`?
-
-            let kkey = secretbox::Key::from_slice(&secret[..]).unwrap();
-            secretbox::seal(&key_with_prefix[..], &nonce, &kkey)
-        })
-        .collect::<Vec<u8>>();
-
-    let boxed_message = secretbox::seal(&plaintext, &nonce, &key);
-
-    let mut result: Vec<u8> = Vec::with_capacity(nonce[..].len() + eph_pk[..].len() + boxed_key_for_recipients.len() + boxed_message.len());
-    result.extend_from_slice(&nonce[..]);
-    result.extend_from_slice(&eph_pk[..]);
-    result.extend(boxed_key_for_recipients);
-    result.extend(boxed_message);
-
-    // The other keys are (or should be) memzeroed in their Drop impls.
-    memzero(&mut key_with_prefix);
-
-    result
+    let mut out = vec![0; encrypted_size(plaintext, recipients)];
+    encrypt_into(plaintext, recipients, &mut out);
+    out
 }
 
-const BOXED_KEY_SIZE_BYTES : usize = 32 + 1 + 16;
+pub fn encrypt_into(plaintext: &[u8], recipients: &[PublicKey], mut out: &mut [u8]) {
+    if recipients.len() > MAX_RECIPIENTS || recipients.len() == 0 {
+        panic!(
+            "Number of recipients must be less than {}, greater than 0",
+            MAX_RECIPIENTS
+        );
+    }
+    assert!(out.len() >= encrypted_size(plaintext, recipients));
+
+    let nonce = Nonce::generate();
+    let (eph_pk, eph_sk) = generate_ephemeral_keypair();
+
+    let mkey = MsgKey {
+        recp_count: recipients.len() as u8,
+        key: Key::generate(),
+    };
+
+    let mut rest = set_prefix(&mut out, nonce.as_bytes());
+    let rest = set_prefix(&mut rest, eph_pk.as_bytes());
+    let (keys, rest) = rest.split_at_mut(recipients.len() * size_of::<BoxedKey>());
+    let mut keychunks = keys.chunks_mut(size_of::<BoxedKey>());
+
+    for pk in recipients {
+        let kkey = Key(derive_shared_secret_pk(&eph_sk, pk).unwrap().0);
+        let mut msg_key = mkey.as_array();
+        let hmac = kkey.seal(&mut msg_key, &nonce);
+        keychunks
+            .next()
+            .unwrap()
+            .copy_from_slice(BoxedKey { hmac, msg_key }.as_bytes());
+    }
+
+    let (hmac_buf, text) = rest.split_at_mut(Hmac::SIZE);
+    text.copy_from_slice(plaintext);
+
+    let hmac = mkey.key.seal(text, &nonce);
+    hmac_buf.copy_from_slice(hmac.as_bytes());
+}
+
+const BOXED_KEY_SIZE_BYTES: usize = 32 + 1 + 16;
 
 /// Attempt to decrypt a private-box message, using your secret key.
 /// If you were an intended recipient then the decrypted message is
@@ -107,66 +148,70 @@ const BOXED_KEY_SIZE_BYTES : usize = 32 + 1 + 16;
 /// extern crate private_box;
 /// extern crate ssb_crypto;
 ///
-/// use private_box::{init, encrypt, decrypt};
-/// use ssb_crypto::generate_longterm_keypair;
+/// use private_box::{encrypt, decrypt};
+/// use ssb_crypto::Keypair;
 ///
 /// fn main() {
-///     init();
 ///     let msg = "hello!".as_bytes();
 ///
-///     let (alice_pk, alice_sk) = generate_longterm_keypair();
-///     let (bob_pk, bob_sk) = generate_longterm_keypair();
+///     let alice = Keypair::generate();
+///     let bob = Keypair::generate();
 ///
-///     let recps = [alice_pk, bob_pk];
+///     let recps = [alice.public, bob.public];
 ///     let cypher = encrypt(msg, &recps);
 ///
-///     let alice_result = decrypt(&cypher, &alice_sk);
-///     let bob_result = decrypt(&cypher, &bob_sk);
+///     let alice_result = decrypt(&cypher, &alice.secret);
+///     let bob_result = decrypt(&cypher, &bob.secret);
 ///
 ///     assert_eq!(&alice_result.unwrap(), &msg);
 ///     assert_eq!(&bob_result.unwrap(), &msg);
 /// }
 ///```
 pub fn decrypt(cyphertext: &[u8], secret_key: &SecretKey) -> Option<Vec<u8>> {
-    let nonce = secretbox::Nonce::from_slice(&cyphertext[0..24])?;
+    let nonce = Nonce::from_slice(&cyphertext[0..24])?;
     let eph_pk = EphPublicKey::from_slice(&cyphertext[24..56])?;
 
-    let secret = derive_shared_secret_sk(secret_key, &eph_pk)?;
-    let kkey = secretbox::Key::from_slice(&secret[..])?;
+    let kkey = Key(derive_shared_secret_sk(secret_key, &eph_pk)?.0);
+    let msg_key = decrypt_msg_key(&cyphertext[56..], &kkey, &nonce)?;
 
-    let key_with_prefix = cyphertext[56..]
+    let boxed_msg = &cyphertext[(56 + BOXED_KEY_SIZE_BYTES * msg_key.recp_count as usize)..];
+    let mut out = vec![0; boxed_msg.len() - Hmac::SIZE];
+    if msg_key.key.open_attached_into(&boxed_msg, &nonce, &mut out) {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+fn decrypt_msg_key(boxes: &[u8], key: &Key, nonce: &Nonce) -> Option<MsgKey> {
+    let mut msg_key = MsgKey::zeroed();
+    for b in boxes
         .chunks_exact(BOXED_KEY_SIZE_BYTES)
-        .find_map(|buf| secretbox::open(&buf, &nonce, &kkey).ok())?;
-
-    let num_recps = key_with_prefix[0] as usize;
-    let key = secretbox::Key::from_slice(&key_with_prefix[1..])?;
-
-    let boxed_msg = &cyphertext[(56 + BOXED_KEY_SIZE_BYTES * num_recps)..];
-    secretbox::open(&boxed_msg, &nonce, &key).ok()
+        .take(MAX_RECIPIENTS)
+    {
+        if key.open_attached_into(b, &nonce, msg_key.as_bytes_mut()) {
+            return Some(msg_key);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
-    use base64::decode;
     use crate::*;
+    use base64::decode;
     use serde_json;
 
     use std::error::Error;
     use std::fs::File;
     use std::path::Path;
 
-    use ssb_crypto::{
-        generate_longterm_keypair,
-        PublicKey,
-        SecretKey,
-
-    };
-
+    use ssb_crypto::Keypair;
 
     #[derive(Serialize, Deserialize)]
     struct Key {
-       secret: String,
-       public: String
+        secret: String,
+        public: String,
     }
 
     #[derive(Serialize, Deserialize)]
@@ -176,7 +221,7 @@ mod tests {
         keys: Vec<Key>,
     }
 
-    fn read_test_data_from_file<P: AsRef<Path>>(path: P) -> Result<TestData, Box<Error>> {
+    fn read_test_data_from_file<P: AsRef<Path>>(path: P) -> Result<TestData, Box<dyn Error>> {
         let file = File::open(path)?;
         let t = serde_json::from_reader(file)?;
         Ok(t)
@@ -184,68 +229,64 @@ mod tests {
 
     #[test]
     fn simple() {
-        let msg : [u8; 3] = [0,1,2];
+        let msg: [u8; 3] = [0, 1, 2];
 
-        init();
-        let (alice_pk, alice_sk) = generate_longterm_keypair();
-        dbg!(alice_sk.0.len());
-        let (bob_pk, bob_sk) = generate_longterm_keypair();
+        // init();
+        let alice = Keypair::generate();
+        let bob = Keypair::generate();
 
-        let recps = [alice_pk, bob_pk];
+        let recps = [alice.public, bob.public];
         let cypher = encrypt(&msg, &recps);
 
-        let alice_result = decrypt(&cypher, &alice_sk);
-        let bob_result = decrypt(&cypher, &bob_sk);
+        let alice_result = decrypt(&cypher, &alice.secret);
+        let bob_result = decrypt(&cypher, &bob.secret);
 
         assert_eq!(alice_result.unwrap(), msg);
         assert_eq!(bob_result.unwrap(), msg);
     }
 
     #[test]
-    fn is_js_compatible(){
+    fn is_js_compatible() {
         let test_data = read_test_data_from_file("./test/simple.json").unwrap();
 
         let cypher = decode(&test_data.cypher_text).unwrap();
-        let keys : Vec<(PublicKey, SecretKey)> = test_data.keys
+        let keys: Vec<Keypair> = test_data
+            .keys
             .iter()
-            .map(|key|{
-                let pk = PublicKey::from_slice(&decode(&key.public).unwrap()).unwrap();
-                let sk = SecretKey::from_slice(&decode(&key.secret).unwrap()).unwrap();
-                (pk, sk)
-            })
+            .map(|key| Keypair::from_base64(&key.secret).unwrap())
             .collect();
 
-        let (_, ref alice_sk) = keys[0];
-        let (_, ref bob_sk) = keys[1];
+        let alice = &keys[0];
+        let bob = &keys[1];
 
-        init();
-        let alice_result = decrypt(&cypher, &alice_sk);
-        let bob_result = decrypt(&cypher, &bob_sk);
-
-        assert_eq!(alice_result.unwrap(), test_data.msg.as_bytes());
-        assert_eq!(bob_result.unwrap(), test_data.msg.as_bytes());
+        // init();
+        assert_eq!(
+            decrypt(&cypher, &alice.secret).unwrap(),
+            test_data.msg.as_bytes()
+        );
+        assert_eq!(
+            decrypt(&cypher, &bob.secret).unwrap(),
+            test_data.msg.as_bytes()
+        );
     }
     #[test]
     #[should_panic]
-    fn passing_too_many_recipients_panics(){
-        let msg : [u8; 3] = [0,1,2];
+    fn passing_too_many_recipients_panics() {
+        let msg: [u8; 3] = [0, 1, 2];
 
-        init();
-        let (alice_pk, _) = generate_longterm_keypair();
-        let recps = vec![alice_pk; 33];
+        // init();
+        let alice = Keypair::generate();
+        let recps = vec![alice.public; 33];
         let _ = encrypt(&msg, &recps);
-
     }
     #[test]
     #[should_panic]
-    fn passing_zero_recipients_panics(){
-        let msg : [u8; 3] = [0,1,2];
+    fn passing_zero_recipients_panics() {
+        let msg: [u8; 3] = [0, 1, 2];
 
-        init();
+        // init();
 
-        let recps : [PublicKey; 0] = [];
+        let recps: [PublicKey; 0] = [];
         let _ = encrypt(&msg, &recps);
     }
-
-
 }

@@ -11,7 +11,8 @@ readme = "README.md"
 keywords = ["ssb", "scuttlebutt"]
 
 [dependencies]
-ssb-crypto = "~0.1.1"
+ssb-crypto = "0.2.0"
+zerocopy = "0.3.0"
 
 [dev-dependencies]
 base64 = "~0.10.1"
