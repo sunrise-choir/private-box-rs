@@ -9,7 +9,7 @@ use ssb_crypto::ephemeral::{
 };
 use ssb_crypto::secretbox::{Hmac, Key, Nonce};
 
-const MAX_RECIPIENTS: usize = 32;
+const MAX_RECIPIENTS: usize = 8;
 
 /// libsodium must be initialised before calling `encrypt` or `decrypt`.
 /// If you're using other libsodium based libraries that already initialise libsodium, you can omit
@@ -276,7 +276,7 @@ mod tests {
 
         // init();
         let alice = Keypair::generate();
-        let recps = vec![alice.public; 33];
+        let recps = vec![alice.public; 9];
         let _ = encrypt(&msg, &recps);
     }
     #[test]
