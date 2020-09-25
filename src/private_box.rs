@@ -1,6 +1,6 @@
 use core::mem::size_of;
-use ssb_crypto::{PublicKey, SecretKey};
-use zerocopy::{AsBytes, FromBytes};
+use ssb_crypto::{Keypair, PublicKey};
+use zerocopy::{AsBytes, FromBytes, LayoutVerified};
 
 // TODO: turns out these things are used for more than just the handshake,
 // so the ssb_crypto submodule should probably be renamed.
@@ -21,7 +21,7 @@ pub fn init() {
 
 #[derive(AsBytes, FromBytes)]
 #[repr(C, packed)]
-struct MsgKey {
+pub struct MsgKey {
     recp_count: u8,
     key: Key,
 }
@@ -32,7 +32,7 @@ impl MsgKey {
             key: Key([0; 32]),
         }
     }
-    fn as_array(&self) -> [u8; 33] {
+    pub fn as_array(&self) -> [u8; 33] {
         let mut out = [0; 33];
         out.copy_from_slice(self.as_bytes());
         out
@@ -69,9 +69,6 @@ fn set_prefix<'a>(buf: &'a mut [u8], prefix: &[u8]) -> &'a mut [u8] {
 ///
 /// # Example
 /// ```
-/// extern crate private_box;
-/// extern crate ssb_crypto;
-///
 /// use private_box::{encrypt, decrypt};
 /// use ssb_crypto::Keypair;
 ///
@@ -84,8 +81,8 @@ fn set_prefix<'a>(buf: &'a mut [u8], prefix: &[u8]) -> &'a mut [u8] {
 ///     let recps = [alice.public, bob.public];
 ///     let cypher = encrypt(msg, &recps);
 ///
-///     let alice_result = decrypt(&cypher, &alice.secret);
-///     let bob_result = decrypt(&cypher, &bob.secret);
+///     let alice_result = decrypt(&cypher, &alice);
+///     let bob_result = decrypt(&cypher, &bob);
 ///
 ///     assert_eq!(alice_result.unwrap(), msg);
 ///     assert_eq!(bob_result.unwrap(), msg);
@@ -145,9 +142,6 @@ const BOXED_KEY_SIZE_BYTES: usize = 32 + 1 + 16;
 ///
 /// # Example
 /// ```
-/// extern crate private_box;
-/// extern crate ssb_crypto;
-///
 /// use private_box::{encrypt, decrypt};
 /// use ssb_crypto::Keypair;
 ///
@@ -160,20 +154,37 @@ const BOXED_KEY_SIZE_BYTES: usize = 32 + 1 + 16;
 ///     let recps = [alice.public, bob.public];
 ///     let cypher = encrypt(msg, &recps);
 ///
-///     let alice_result = decrypt(&cypher, &alice.secret);
-///     let bob_result = decrypt(&cypher, &bob.secret);
+///     let alice_result = decrypt(&cypher, &alice);
+///     let bob_result = decrypt(&cypher, &bob);
 ///
 ///     assert_eq!(&alice_result.unwrap(), &msg);
 ///     assert_eq!(&bob_result.unwrap(), &msg);
 /// }
 ///```
-pub fn decrypt(cyphertext: &[u8], secret_key: &SecretKey) -> Option<Vec<u8>> {
+pub fn decrypt(cyphertext: &[u8], keypair: &Keypair) -> Option<Vec<u8>> {
+    let msg_key = decrypt_key(cyphertext, keypair)?;
+    decrypt_body(cyphertext, &msg_key)
+}
+
+// exposed for ssb-neon-keys
+pub fn decrypt_key(cyphertext: &[u8], keypair: &Keypair) -> Option<MsgKey> {
     let nonce = Nonce::from_slice(&cyphertext[0..24])?;
     let eph_pk = EphPublicKey::from_slice(&cyphertext[24..56])?;
 
-    let kkey = Key(derive_shared_secret_sk(secret_key, &eph_pk)?.0);
-    let msg_key = decrypt_msg_key(&cyphertext[56..], &kkey, &nonce)?;
+    let key_key = Key(derive_shared_secret_sk(&keypair.secret, &eph_pk)?.0);
+    let mut msg_key = MsgKey::zeroed();
 
+    &cyphertext[56..]
+        .chunks_exact(BOXED_KEY_SIZE_BYTES)
+        .take(MAX_RECIPIENTS)
+        .find(|b| key_key.open_attached_into(b, &nonce, msg_key.as_bytes_mut()))?;
+
+    Some(msg_key)
+}
+
+// exposed for ssb-neon-keys
+pub fn decrypt_body(cyphertext: &[u8], msg_key: &MsgKey) -> Option<Vec<u8>> {
+    let nonce = Nonce::from_slice(&cyphertext[0..24])?;
     let boxed_msg = &cyphertext[(56 + BOXED_KEY_SIZE_BYTES * msg_key.recp_count as usize)..];
     let mut out = vec![0; boxed_msg.len() - Hmac::SIZE];
     if msg_key.key.open_attached_into(&boxed_msg, &nonce, &mut out) {
@@ -183,23 +194,19 @@ pub fn decrypt(cyphertext: &[u8], secret_key: &SecretKey) -> Option<Vec<u8>> {
     }
 }
 
-fn decrypt_msg_key(boxes: &[u8], key: &Key, nonce: &Nonce) -> Option<MsgKey> {
-    let mut msg_key = MsgKey::zeroed();
-    for b in boxes
-        .chunks_exact(BOXED_KEY_SIZE_BYTES)
-        .take(MAX_RECIPIENTS)
-    {
-        if key.open_attached_into(b, &nonce, msg_key.as_bytes_mut()) {
-            return Some(msg_key);
-        }
-    }
-    None
+/// Panics if `msg_key` len is not 33 bytes.
+pub fn decrypt_body_with_key_bytes(cyphertext: &[u8], msg_key: &[u8]) -> Option<Vec<u8>> {
+    let key = LayoutVerified::<&[u8], MsgKey>::new(msg_key)
+        .unwrap()
+        .into_ref();
+    decrypt_body(cyphertext, key)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::*;
     use base64::decode;
+    use serde_derive::{Deserialize, Serialize};
     use serde_json;
 
     use std::error::Error;
@@ -238,8 +245,8 @@ mod tests {
         let recps = [alice.public, bob.public];
         let cypher = encrypt(&msg, &recps);
 
-        let alice_result = decrypt(&cypher, &alice.secret);
-        let bob_result = decrypt(&cypher, &bob.secret);
+        let alice_result = decrypt(&cypher, &alice);
+        let bob_result = decrypt(&cypher, &bob);
 
         assert_eq!(alice_result.unwrap(), msg);
         assert_eq!(bob_result.unwrap(), msg);
@@ -260,14 +267,8 @@ mod tests {
         let bob = &keys[1];
 
         // init();
-        assert_eq!(
-            decrypt(&cypher, &alice.secret).unwrap(),
-            test_data.msg.as_bytes()
-        );
-        assert_eq!(
-            decrypt(&cypher, &bob.secret).unwrap(),
-            test_data.msg.as_bytes()
-        );
+        assert_eq!(decrypt(&cypher, &alice).unwrap(), test_data.msg.as_bytes());
+        assert_eq!(decrypt(&cypher, &bob).unwrap(), test_data.msg.as_bytes());
     }
     #[test]
     #[should_panic]
